@@ -1,25 +1,13 @@
-import React, { useCallback, useEffect } from "react";
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl } from "react-native";
-import { useDispatch, useSelector } from 'react-redux';
+import React from "react";
+import { View, Text, FlatList, StyleSheet } from "react-native";
+import { useSelector } from 'react-redux';
 import { useTheme } from '../contexts/ThemeContext';
-import { fetchSkillsFromApi } from '../store/userSlice';
 import Motion from '../components/motion';
 
 export default function HomeScreen({ navigation }) {
   const { colors } = useTheme();
-  const dispatch = useDispatch();
   const skills = useSelector((state) => state.user.communitySkills || []);
-  const isFetchingSkills = useSelector((state) => state.user.isFetchingSkills);
-  const skillsError = useSelector((state) => state.user.skillsError);
   const offeredSkills = skills.filter((skill) => skill.type === 'offer');
-
-  const syncSkills = useCallback(() => {
-    dispatch(fetchSkillsFromApi());
-  }, [dispatch]);
-
-  useEffect(() => {
-    syncSkills();
-  }, [syncSkills]);
 
   const renderSkill = ({ item, index }) => (
     <Motion
@@ -42,23 +30,6 @@ export default function HomeScreen({ navigation }) {
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <Motion style={styles.headerSection} variant="fadeSlide">
         <Text style={[styles.title, { color: colors.primaryText }]}>Explore</Text>
-        <Text style={[styles.subtitle, { color: colors.secondaryText }]}>Available skills in your community</Text>
-        <Motion
-          as="touchable"
-          style={[styles.syncButton, { borderColor: colors.muted, backgroundColor: colors.card }]}
-          onPress={syncSkills}
-          disabled={isFetchingSkills}
-          activeOpacity={0.85}
-          variant="scale"
-          delay={80}
-        >
-          <Text style={[styles.syncButtonText, { color: colors.primaryText }]}>
-            {isFetchingSkills ? 'Syncing...' : 'Sync from API'}
-          </Text>
-        </Motion>
-        {skillsError ? (
-          <Text style={styles.errorText}>{skillsError}</Text>
-        ) : null}
       </Motion>
 
       <FlatList
@@ -67,16 +38,9 @@ export default function HomeScreen({ navigation }) {
         keyExtractor={(item) => item.id}
         style={styles.list}
         contentContainerStyle={styles.listContent}
-        refreshControl={
-          <RefreshControl
-            refreshing={isFetchingSkills}
-            onRefresh={syncSkills}
-            tintColor={colors.primaryText}
-          />
-        }
         ListEmptyComponent={
           <View style={styles.emptyWrap}>
-            <Text style={[styles.emptyText, { color: colors.secondaryText }]}>No skills available yet</Text>
+            <Text style={[styles.emptyText, { color: colors.secondaryText }]}>No community skills yet</Text>
           </View>
         }
       />
@@ -98,26 +62,6 @@ const styles = StyleSheet.create({
     fontSize: 32,
     fontWeight: '600',
     marginBottom: 4,
-  },
-  subtitle: {
-    fontSize: 16,
-  },
-  syncButton: {
-    marginTop: 14,
-    alignSelf: 'flex-start',
-    borderWidth: 1,
-    borderRadius: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-  },
-  syncButtonText: {
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  errorText: {
-    marginTop: 10,
-    color: '#ef4444',
-    fontSize: 13,
   },
   list: {
     flex: 1,

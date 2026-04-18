@@ -6,4 +6,4 @@ const platformModule = Platform.OS === 'web'
 	: require('./firebaseconfig.native');
 
 export { firebaseConfig };
-export const { app, auth } = platformModule;
+export const { app, auth, db } = platformModule;

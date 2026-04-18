@@ -1,25 +1,21 @@
-import React from "react";
-import { Alert, ActivityIndicator, Image, Platform, ScrollView, StyleSheet, Text, View } from "react-native";
+import React, { useCallback, useState } from "react";
+import { ActivityIndicator, Image, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useTheme } from '../contexts/ThemeContext';
 import { useDispatch, useSelector } from 'react-redux';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { useAuth } from '../hooks/useAuth';
 import { removeSkillAndPersist } from '../store/userSlice';
 import Motion from '../components/motion';
-
-const showError = (title, message) => {
-  if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.alert === 'function') {
-    window.alert(`${title}\n\n${message}`);
-    return;
-  }
-
-  Alert.alert(title, message);
-};
+import { fetchReviewsByReviewer } from '../services/firestoreService';
+import { showError } from '../utils/notify';
 
 export default function ProfileScreen() {
   const { theme, toggleTheme, colors } = useTheme();
   const { user, logout, authLoading } = useAuth();
   const dispatch = useDispatch();
+  const navigation = useNavigation();
   const skills = useSelector(state => state.user.skills || []);
+  const [reviews, setReviews] = useState([]);
 
   const offeredSkills = skills.filter((skill) => skill.type === 'offer');
   const wantedSkills = skills.filter((skill) => skill.type === 'want');
@@ -54,6 +50,31 @@ export default function ProfileScreen() {
       }
     })();
   };
+
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+
+      const hydrateReviews = async () => {
+        try {
+          const storedReviews = await fetchReviewsByReviewer(user?.uid);
+          if (active) {
+            setReviews(storedReviews);
+          }
+        } catch {
+          if (active) {
+            setReviews([]);
+          }
+        }
+      };
+
+      void hydrateReviews();
+
+      return () => {
+        active = false;
+      };
+    }, [user?.uid])
+  );
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -100,6 +121,28 @@ export default function ProfileScreen() {
             <Text style={[styles.statNumber, { color: colors.primaryText }]}>{wantedSkills.length}</Text>
             <Text style={[styles.statLabel, { color: colors.secondaryText }]}>Wanting</Text>
           </View>
+        </Motion>
+
+        <Motion style={styles.quickLinksRow} variant="slide" delay={150}>
+          <Motion
+            as="touchable"
+            style={[styles.quickLinkButton, { backgroundColor: colors.card, borderColor: colors.muted }]}
+            onPress={() => navigation.navigate('Bookings')}
+            activeOpacity={0.85}
+            variant="scale"
+          >
+            <Text style={[styles.quickLinkText, { color: colors.primaryText }]}>Bookings</Text>
+          </Motion>
+          <Motion
+            as="touchable"
+            style={[styles.quickLinkButton, { backgroundColor: colors.card, borderColor: colors.muted }]}
+            onPress={() => navigation.navigate('Chat')}
+            activeOpacity={0.85}
+            variant="scale"
+            delay={50}
+          >
+            <Text style={[styles.quickLinkText, { color: colors.primaryText }]}>Chat</Text>
+          </Motion>
         </Motion>
 
         <Motion
@@ -181,6 +224,30 @@ export default function ProfileScreen() {
               <Text style={[styles.emptyText, { color: colors.secondaryText }]}>No skills wanted yet</Text>
             )}
           </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.secondaryText }]}>RECENT REVIEWS ({reviews.length})</Text>
+          {reviews.length ? (
+            reviews.slice(0, 5).map((review) => (
+              <View
+                key={review.id}
+                style={[styles.reviewCard, { backgroundColor: colors.card, borderColor: colors.muted }]}
+              >
+                <Text style={[styles.reviewMentor, { color: colors.primaryText }]}>{review.mentor}</Text>
+                <Text style={[styles.reviewMeta, { color: colors.secondaryText }]}>
+                  {'★'.repeat(Number(review.rating) || 0)}
+                </Text>
+                {review.reviewText ? (
+                  <Text style={[styles.reviewText, { color: colors.secondaryText }]}>{review.reviewText}</Text>
+                ) : (
+                  <Text style={[styles.reviewText, { color: colors.secondaryText }]}>No written note.</Text>
+                )}
+              </View>
+            ))
+          ) : (
+            <Text style={[styles.emptyText, { color: colors.secondaryText }]}>No reviews yet</Text>
+          )}
         </View>
       </ScrollView>
     </View>
@@ -278,6 +345,23 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
   },
+  quickLinksRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+    gap: 10,
+  },
+  quickLinkButton: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickLinkText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
   statItem: {
     flex: 1,
     alignItems: 'center',
@@ -366,5 +450,24 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 14,
     paddingVertical: 4,
+  },
+  reviewCard: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 10,
+  },
+  reviewMentor: {
+    fontSize: 15,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  reviewMeta: {
+    fontSize: 13,
+    marginBottom: 4,
+  },
+  reviewText: {
+    fontSize: 13,
+    lineHeight: 18,
   },
 });

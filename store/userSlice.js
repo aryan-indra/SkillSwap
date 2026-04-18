@@ -1,37 +1,5 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import { getSkillsFromDb, initSkillsTable, replaceSkillsInDb } from '../storage/skillsDb';
-
-const legacyDefaultSkills = [
-  { title: 'Web Design', type: 'offer' },
-  { title: 'Photography', type: 'offer' },
-  { title: 'Spanish Language', type: 'want' },
-  { title: 'Graphic Design', type: 'offer' },
-  { title: 'Video Editing', type: 'want' },
-  { title: 'Public Speaking', type: 'offer' },
-  { title: 'Italian Cooking', type: 'want' },
-  { title: 'UI/UX Design', type: 'offer' },
-  { title: 'Guitar Playing', type: 'want' },
-];
-
-const legacyDefaultSkillSignatures = new Set(
-  legacyDefaultSkills.map((skill) => `${skill.title.toLowerCase()}::${skill.type}`)
-);
-
-const isApiSkill = (skill) => typeof skill?.id === 'string' && skill.id.startsWith('api-');
-
-const normalizeSkillSignature = (skill) => {
-  const title = typeof skill?.title === 'string' ? skill.title.trim().toLowerCase() : '';
-  const type = typeof skill?.type === 'string' ? skill.type.trim().toLowerCase() : '';
-  return `${title}::${type}`;
-};
-
-const stripLegacyDefaultSkills = (skills) => {
-  if (!Array.isArray(skills)) {
-    return [];
-  }
-
-  return skills.filter((skill) => !legacyDefaultSkillSignatures.has(normalizeSkillSignature(skill)));
-};
+import { createSkill, fetchCommunitySkills, fetchUserSkills, removeSkill } from '../services/firestoreService';
 
 const getResolvedUserId = (state, userId) => {
   if (typeof userId === 'string' && userId.trim().length > 0) {
@@ -42,44 +10,7 @@ const getResolvedUserId = (state, userId) => {
   return typeof activeUserId === 'string' && activeUserId.trim().length > 0 ? activeUserId.trim() : null;
 };
 
-const initialBookings = [
-  {
-    id: '1',
-    mentor: 'Alice Johnson',
-    skill: 'Python',
-    date: '2024-02-25',
-    time: '3:00 PM',
-    status: 'confirmed',
-    duration: '1 hour',
-  },
-  {
-    id: '2',
-    mentor: 'Bob Smith',
-    skill: 'JavaScript',
-    date: '2024-02-26',
-    time: '2:00 PM',
-    status: 'pending',
-    duration: '45 minutes',
-  },
-  {
-    id: '3',
-    mentor: 'Charlie Brown',
-    skill: 'React Native',
-    date: '2024-02-20',
-    time: '4:00 PM',
-    status: 'completed',
-    duration: '1 hour',
-  },
-  {
-    id: '4',
-    mentor: 'Diana Prince',
-    skill: 'Machine Learning',
-    date: '2024-02-15',
-    time: '1:00 PM',
-    status: 'cancelled',
-    duration: '1.5 hours',
-  },
-];
+const initialBookings = [];
 
 const normalizeAuthUser = (user) => ({
   uid: user?.uid || '',
@@ -107,60 +38,31 @@ const applySignedOutUser = (state) => {
   state.authError = null;
 };
 
-const persistSkills = async (skills, userId) => {
-  if (!userId) {
-    return;
-  }
-
-  await replaceSkillsInDb(skills, userId);
-};
-
 export const initializeSkillsData = createAsyncThunk('user/initializeSkillsData', async (userId, { getState, rejectWithValue }) => {
   try {
-    await initSkillsTable();
-
     const resolvedUserId = getResolvedUserId(getState(), userId);
     if (!resolvedUserId) {
-      return [];
+      return { userSkills: [], communitySkills: [] };
     }
 
-    const dbSkills = await getSkillsFromDb(resolvedUserId);
-    if (dbSkills !== null) {
-      const cleanedSkills = stripLegacyDefaultSkills(dbSkills).filter((skill) => !isApiSkill(skill));
+    const [userSkills, communitySkills] = await Promise.all([
+      fetchUserSkills(resolvedUserId),
+      fetchCommunitySkills(),
+    ]);
 
-      if (cleanedSkills.length !== dbSkills.length) {
-        await persistSkills(cleanedSkills, resolvedUserId);
-      }
-
-      return cleanedSkills;
-    }
-
-    return [];
+    return { userSkills, communitySkills };
   } catch (error) {
     return rejectWithValue(error.message || 'Unable to load skills');
   }
 });
 
-export const fetchSkillsFromApi = createAsyncThunk(
-  'user/fetchSkillsFromApi',
+export const refreshCommunitySkills = createAsyncThunk(
+  'user/refreshCommunitySkills',
   async (_, { rejectWithValue }) => {
     try {
-      const response = await fetch('https://jsonplaceholder.typicode.com/users');
-      if (!response.ok) {
-        throw new Error(`Request failed with status ${response.status}`);
-      }
-
-      const users = await response.json();
-
-      const apiSkills = users.slice(0, 6).map((user) => ({
-        id: `api-${user.id}`,
-        title: `${user.company?.bs || 'Mentorship'} (${user.username})`,
-        type: 'offer',
-      }));
-
-      return apiSkills;
+      return await fetchCommunitySkills();
     } catch (error) {
-      return rejectWithValue(error.message || 'Unable to fetch skills from API');
+      return rejectWithValue(error.message || 'Unable to refresh community skills');
     }
   }
 );
@@ -169,18 +71,14 @@ export const addSkillAndPersist = createAsyncThunk(
   'user/addSkillAndPersist',
   async ({ title, type }, { getState, rejectWithValue }) => {
     try {
-      const newSkill = {
-        id: Date.now().toString(),
-        title,
-        type,
-      };
+      const state = getState();
+      const currentUserId = getResolvedUserId(state);
+      const ownerName = state?.user?.user?.name || state?.user?.user?.email || 'Unknown user';
+      if (!currentUserId) {
+        throw new Error('Missing authenticated user');
+      }
 
-      const skills = getState().user.skills || [];
-      const updatedSkills = [...skills, newSkill];
-      const currentUserId = getResolvedUserId(getState());
-      await persistSkills(updatedSkills, currentUserId);
-
-      return newSkill;
+      return await createSkill({ ownerUid: currentUserId, ownerName, title, type });
     } catch (error) {
       return rejectWithValue(error.message || 'Unable to save the new skill');
     }
@@ -191,13 +89,14 @@ export const removeSkillAndPersist = createAsyncThunk(
   'user/removeSkillAndPersist',
   async ({ skillId }, { getState, rejectWithValue }) => {
     try {
-      const skills = getState().user.skills || [];
-      const updatedSkills = skills.filter((skill) => skill.id !== skillId);
       const currentUserId = getResolvedUserId(getState());
+      if (!currentUserId) {
+        throw new Error('Missing authenticated user');
+      }
 
-      await persistSkills(updatedSkills, currentUserId);
+      await removeSkill({ skillId, ownerUid: currentUserId });
 
-      return updatedSkills;
+      return skillId;
     } catch (error) {
       return rejectWithValue(error.message || 'Unable to remove the skill');
     }
@@ -270,26 +169,28 @@ const userSlice = createSlice({
       })
       .addCase(initializeSkillsData.fulfilled, (state, action) => {
         state.isHydratingSkills = false;
-        state.skills = action.payload;
+        state.skills = action.payload.userSkills;
+        state.communitySkills = action.payload.communitySkills;
       })
       .addCase(initializeSkillsData.rejected, (state, action) => {
         state.isHydratingSkills = false;
         state.skillsError = action.payload || action.error.message;
       })
-      .addCase(fetchSkillsFromApi.pending, (state) => {
+      .addCase(refreshCommunitySkills.pending, (state) => {
         state.isFetchingSkills = true;
         state.skillsError = null;
       })
-      .addCase(fetchSkillsFromApi.fulfilled, (state, action) => {
+      .addCase(refreshCommunitySkills.fulfilled, (state, action) => {
         state.isFetchingSkills = false;
         state.communitySkills = action.payload;
       })
-      .addCase(fetchSkillsFromApi.rejected, (state, action) => {
+      .addCase(refreshCommunitySkills.rejected, (state, action) => {
         state.isFetchingSkills = false;
         state.skillsError = action.payload || action.error.message;
       })
       .addCase(addSkillAndPersist.fulfilled, (state, action) => {
         state.skills.push(action.payload);
+        state.communitySkills.push(action.payload);
       })
       .addCase(addSkillAndPersist.rejected, (state, action) => {
         state.skillsError = action.payload || action.error.message;
@@ -298,7 +199,9 @@ const userSlice = createSlice({
         state.skillsError = null;
       })
       .addCase(removeSkillAndPersist.fulfilled, (state, action) => {
-        state.skills = action.payload;
+        const skillId = action.payload;
+        state.skills = state.skills.filter((skill) => skill.id !== skillId);
+        state.communitySkills = state.communitySkills.filter((skill) => skill.id !== skillId);
       })
       .addCase(removeSkillAndPersist.rejected, (state, action) => {
         state.skillsError = action.payload || action.error.message;

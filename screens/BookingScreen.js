@@ -1,14 +1,16 @@
 import React from "react";
-import { View, Text, FlatList, StyleSheet } from "react-native";
+import { View, Text, FlatList, StyleSheet, TextInput } from "react-native";
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
 import { useTheme } from '../contexts/ThemeContext';
-import { useDispatch, useSelector } from 'react-redux';
-import { addBooking } from '../store/userSlice';
+import { useFocusEffect } from '@react-navigation/native';
+import { useSelector } from 'react-redux';
 import Motion from '../components/motion';
+import { createBookingRequest, fetchBookingsForUser, updateBookingRequestStatus } from '../services/firestoreService';
+import { showError, showSuccess } from '../utils/notify';
 
 const Tab = createMaterialTopTabNavigator();
 
-function BookingList({ bookings, navigation }) {
+function BookingList({ bookings, navigation, currentUserId, onAccept, onReject }) {
   const { colors } = useTheme();
   const getStatusColor = (status) => {
     switch (status) {
@@ -29,7 +31,9 @@ function BookingList({ bookings, navigation }) {
         </Text>
       </View>
 
-      <Text style={{ ...styles.mentorName, color: colors.secondaryText }}>with {item.mentor}</Text>
+      <Text style={{ ...styles.mentorName, color: colors.secondaryText }}>
+        with {item.requesterUid === currentUserId ? item.receiverName : item.requesterName}
+      </Text>
 
       <View style={styles.bookingDetails}>
         <Text style={{ ...styles.detailText, color: colors.secondaryText }}>📅 {item.date}</Text>
@@ -37,13 +41,41 @@ function BookingList({ bookings, navigation }) {
         <Text style={{ ...styles.detailText, color: colors.secondaryText }}>⏱️ {item.duration}</Text>
       </View>
 
+      {item.status === 'pending' && item.receiverUid === currentUserId ? (
+        <View style={styles.pendingActions}>
+          <Motion
+            as="touchable"
+            style={[styles.acceptButton, { backgroundColor: colors.success }]}
+            onPress={() => onAccept(item.id)}
+            activeOpacity={0.85}
+            variant="scale"
+          >
+            <Text style={styles.actionButtonText}>Accept</Text>
+          </Motion>
+          <Motion
+            as="touchable"
+            style={[styles.rejectButton, { backgroundColor: '#ef4444' }]}
+            onPress={() => onReject(item.id)}
+            activeOpacity={0.85}
+            variant="scale"
+            delay={50}
+          >
+            <Text style={styles.actionButtonText}>Reject</Text>
+          </Motion>
+        </View>
+      ) : null}
+
+      {item.status === 'pending' && item.requesterUid === currentUserId ? (
+        <Text style={[styles.pendingLabel, { color: colors.secondaryText }]}>Waiting for response</Text>
+      ) : null}
+
       {item.status === 'completed' && (
         <Motion
           as="touchable"
           style={[styles.reviewButton, { backgroundColor: colors.accent }]}
           onPress={() =>
             navigation.navigate("Review", {
-              mentor: item.mentor,
+              mentor: item.requesterUid === currentUserId ? item.receiverName : item.requesterName,
               bookingId: item.id
             })
           }
@@ -62,15 +94,19 @@ function BookingList({ bookings, navigation }) {
       data={bookings}
       renderItem={renderBooking}
       keyExtractor={item => item.id}
-      style={{ ...styles.bookingList, backgroundColor: colors.background }}
+      style={styles.bookingList}
+      contentContainerStyle={styles.bookingListContent}
       showsVerticalScrollIndicator={false}
     />
   );
 }
 
-function UpcomingBookingsTab({ navigation }) {
+function UpcomingBookingsTab({ navigation, route }) {
   const { colors } = useTheme();
-  const bookings = useSelector((state) => state.user.bookings);
+  const bookings = route.params?.bookings || [];
+  const currentUserId = route.params?.currentUserId;
+  const onAccept = route.params?.onAccept;
+  const onReject = route.params?.onReject;
 
   const upcomingBookings = bookings.filter(booking =>
     booking.status === 'confirmed' || booking.status === 'pending'
@@ -78,7 +114,13 @@ function UpcomingBookingsTab({ navigation }) {
 
   return (
     <View style={styles.container}>
-      <BookingList bookings={upcomingBookings} navigation={navigation} />
+      <BookingList
+        bookings={upcomingBookings}
+        navigation={navigation}
+        currentUserId={currentUserId}
+        onAccept={onAccept}
+        onReject={onReject}
+      />
       {upcomingBookings.length === 0 && (
         <Motion style={styles.emptyState} variant="fade" delay={80}>
           <Text style={{ ...styles.emptyText, color: colors.secondaryText }}>No upcoming bookings</Text>
@@ -89,9 +131,12 @@ function UpcomingBookingsTab({ navigation }) {
   );
 }
 
-function CompletedBookingsTab({ navigation }) {
+function CompletedBookingsTab({ navigation, route }) {
   const { colors } = useTheme();
-  const bookings = useSelector((state) => state.user.bookings);
+  const bookings = route.params?.bookings || [];
+  const currentUserId = route.params?.currentUserId;
+  const onAccept = route.params?.onAccept;
+  const onReject = route.params?.onReject;
 
   const completedBookings = bookings.filter(booking =>
     booking.status === 'completed'
@@ -99,7 +144,13 @@ function CompletedBookingsTab({ navigation }) {
 
   return (
     <View style={styles.container}>
-      <BookingList bookings={completedBookings} navigation={navigation} />
+      <BookingList
+        bookings={completedBookings}
+        navigation={navigation}
+        currentUserId={currentUserId}
+        onAccept={onAccept}
+        onReject={onReject}
+      />
       {completedBookings.length === 0 && (
         <Motion style={styles.emptyState} variant="fade" delay={80}>
           <Text style={{ ...styles.emptyText, color: colors.secondaryText }}>No completed bookings</Text>
@@ -110,9 +161,12 @@ function CompletedBookingsTab({ navigation }) {
   );
 }
 
-function CancelledBookingsTab({ navigation }) {
+function CancelledBookingsTab({ navigation, route }) {
   const { colors } = useTheme();
-  const bookings = useSelector((state) => state.user.bookings);
+  const bookings = route.params?.bookings || [];
+  const currentUserId = route.params?.currentUserId;
+  const onAccept = route.params?.onAccept;
+  const onReject = route.params?.onReject;
 
   const cancelledBookings = bookings.filter(booking =>
     booking.status === 'cancelled'
@@ -120,7 +174,13 @@ function CancelledBookingsTab({ navigation }) {
 
   return (
     <View style={styles.container}>
-      <BookingList bookings={cancelledBookings} navigation={navigation} />
+      <BookingList
+        bookings={cancelledBookings}
+        navigation={navigation}
+        currentUserId={currentUserId}
+        onAccept={onAccept}
+        onReject={onReject}
+      />
       {cancelledBookings.length === 0 && (
         <Motion style={styles.emptyState} variant="fade" delay={80}>
           <Text style={{ ...styles.emptyText, color: colors.secondaryText }}>No cancelled bookings</Text>
@@ -132,109 +192,289 @@ function CancelledBookingsTab({ navigation }) {
 }
 
 export default function BookingScreen({ route, navigation }) {
-  const { mentor, skill } = route.params || {};
+  const { mentor, mentorUid, skill } = route.params || {};
   const { colors } = useTheme();
-  const dispatch = useDispatch();
-  const bookings = useSelector((state) => state.user.bookings);
+  const user = useSelector((state) => state.user.user);
+  const [bookings, setBookings] = React.useState([]);
+  const [loading, setLoading] = React.useState(false);
+  const [date, setDate] = React.useState('');
+  const [time, setTime] = React.useState('');
+  const [duration, setDuration] = React.useState('');
+  const [isSubmittingRequest, setIsSubmittingRequest] = React.useState(false);
 
-  // If coming from match screen, add new booking
-  React.useEffect(() => {
-    if (mentor && skill) {
-      const alreadyExists = bookings.some(
-        (item) => item.mentor === mentor && item.skill === skill && item.status === 'pending'
-      );
-
-      if (alreadyExists) {
-        return;
-      }
-
-      const newBooking = {
-        id: Date.now().toString(),
-        mentor,
-        skill,
-        date: '2024-02-28',
-        time: '10:00 AM',
-        status: 'pending',
-        duration: '1 hour'
-      };
-
-      dispatch(addBooking(newBooking));
+  const loadBookings = React.useCallback(async () => {
+    if (!user?.uid) {
+      return;
     }
-  }, [mentor, skill, bookings, dispatch]);
+    try {
+      setLoading(true);
+      const data = await fetchBookingsForUser(user.uid);
+      setBookings(data);
+    } catch {
+      showError('Unable to load bookings', 'Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.uid]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      void loadBookings();
+    }, [loadBookings])
+  );
+
+  const handleCreateRequest = async () => {
+    const trimmedDate = date.trim();
+    const trimmedTime = time.trim();
+    const trimmedDuration = duration.trim();
+
+    if (!mentorUid || !skill || !mentor) {
+      showError('Missing match details', 'Please schedule from a match card.');
+      return;
+    }
+    if (!trimmedDate || !trimmedTime || !trimmedDuration) {
+      showError('Missing schedule details', 'Please provide day, time, and duration.');
+      return;
+    }
+
+    try {
+      setIsSubmittingRequest(true);
+      await createBookingRequest({
+        requesterUid: user.uid,
+        requesterName: user.name || user.email || 'Unknown user',
+        receiverUid: mentorUid,
+        receiverName: mentor,
+        skill,
+        date: trimmedDate,
+        time: trimmedTime,
+        duration: trimmedDuration,
+      });
+      setDate('');
+      setTime('');
+      setDuration('');
+      showSuccess('Request sent', `Session request sent to ${mentor}.`);
+      await loadBookings();
+      navigation.setParams({ mentor: undefined, mentorUid: undefined, skill: undefined });
+    } catch {
+      showError('Unable to schedule', 'Please try again.');
+    } finally {
+      setIsSubmittingRequest(false);
+    }
+  };
+
+  const handleAccept = async (bookingId) => {
+    try {
+      await updateBookingRequestStatus({ bookingId, status: 'confirmed' });
+      showSuccess('Request accepted', 'The session request is now confirmed.');
+      await loadBookings();
+    } catch {
+      showError('Unable to accept', 'Please try again.');
+    }
+  };
+
+  const handleReject = async (bookingId) => {
+    try {
+      await updateBookingRequestStatus({ bookingId, status: 'cancelled' });
+      showSuccess('Request rejected', 'The session request was rejected.');
+      await loadBookings();
+    } catch {
+      showError('Unable to reject', 'Please try again.');
+    }
+  };
 
   return (
-    <Tab.Navigator
-      screenOptions={{
-        tabBarActiveTintColor: colors.accent,
-        tabBarInactiveTintColor: colors.secondaryText,
-        tabBarIndicatorStyle: {
-          backgroundColor: colors.accent,
-          height: 3,
-        },
-        tabBarLabelStyle: {
-          fontSize: 14,
-          fontWeight: '600',
-        },
-        tabBarStyle: {
-          backgroundColor: colors.card,
-          elevation: 0,
-          shadowOpacity: 0,
-        },
-      }}
-    >
-      <Tab.Screen name="Upcoming" component={UpcomingBookingsTab} />
-      <Tab.Screen name="Completed" component={CompletedBookingsTab} />
-      <Tab.Screen name="Cancelled" component={CancelledBookingsTab} />
-    </Tab.Navigator>
+    <View style={[styles.screen, { backgroundColor: colors.background }]}>
+      <Motion style={styles.headerSection} variant="fadeSlide">
+        <Text style={[styles.title, { color: colors.primaryText }]}>Bookings</Text>
+        <Text style={[styles.subtitle, { color: colors.secondaryText }]}>Track your upcoming and past sessions</Text>
+      </Motion>
+
+      {mentorUid && skill ? (
+        <View style={[styles.requestCard, { backgroundColor: colors.card, borderColor: colors.muted }]}>
+          <Text style={[styles.requestTitle, { color: colors.primaryText }]}>Schedule with {mentor}</Text>
+          <Text style={[styles.requestSkill, { color: colors.secondaryText }]}>Skill: {skill}</Text>
+          <TextInput
+            style={[styles.requestInput, { color: colors.primaryText, borderColor: colors.muted }]}
+            placeholder="Day (e.g., Monday, 20 May)"
+            placeholderTextColor={colors.placeholder}
+            value={date}
+            onChangeText={setDate}
+          />
+          <TextInput
+            style={[styles.requestInput, { color: colors.primaryText, borderColor: colors.muted }]}
+            placeholder="Time (e.g., 7:00 PM)"
+            placeholderTextColor={colors.placeholder}
+            value={time}
+            onChangeText={setTime}
+          />
+          <TextInput
+            style={[styles.requestInput, { color: colors.primaryText, borderColor: colors.muted }]}
+            placeholder="Duration (e.g., 60 mins)"
+            placeholderTextColor={colors.placeholder}
+            value={duration}
+            onChangeText={setDuration}
+          />
+          <Motion
+            as="touchable"
+            style={[styles.requestButton, { backgroundColor: colors.accent }, isSubmittingRequest && styles.requestButtonDisabled]}
+            onPress={handleCreateRequest}
+            disabled={isSubmittingRequest}
+            variant="scale"
+            activeOpacity={0.85}
+          >
+            <Text style={styles.requestButtonText}>{isSubmittingRequest ? 'Sending...' : 'Send Request'}</Text>
+          </Motion>
+        </View>
+      ) : null}
+
+      <View style={[styles.tabsContainer, { backgroundColor: colors.background }]}>
+        <Tab.Navigator
+          screenOptions={{
+            tabBarActiveTintColor: colors.accent,
+            tabBarInactiveTintColor: colors.secondaryText,
+            tabBarIndicatorStyle: {
+              backgroundColor: colors.accent,
+              height: 3,
+            },
+            tabBarLabelStyle: {
+              fontSize: 14,
+              fontWeight: '600',
+              textTransform: 'none',
+            },
+            tabBarStyle: {
+              backgroundColor: colors.card,
+              borderRadius: 10,
+              marginHorizontal: 24,
+              marginBottom: 14,
+              elevation: 0,
+              shadowOpacity: 0,
+            },
+            tabBarPressColor: 'transparent',
+          }}
+        >
+          <Tab.Screen name="Upcoming" listeners={{ focus: () => loadBookings() }}>
+            {(tabProps) => (
+              <UpcomingBookingsTab
+                {...tabProps}
+                route={{
+                  ...tabProps.route,
+                  params: { bookings, currentUserId: user?.uid, onAccept: handleAccept, onReject: handleReject },
+                }}
+              />
+            )}
+          </Tab.Screen>
+          <Tab.Screen name="Completed" listeners={{ focus: () => loadBookings() }}>
+            {(tabProps) => (
+              <CompletedBookingsTab
+                {...tabProps}
+                route={{
+                  ...tabProps.route,
+                  params: { bookings, currentUserId: user?.uid, onAccept: handleAccept, onReject: handleReject },
+                }}
+              />
+            )}
+          </Tab.Screen>
+          <Tab.Screen name="Cancelled" listeners={{ focus: () => loadBookings() }}>
+            {(tabProps) => (
+              <CancelledBookingsTab
+                {...tabProps}
+                route={{
+                  ...tabProps.route,
+                  params: { bookings, currentUserId: user?.uid, onAccept: handleAccept, onReject: handleReject },
+                }}
+              />
+            )}
+          </Tab.Screen>
+        </Tab.Navigator>
+      </View>
+      {loading ? (
+        <Text style={[styles.loadingText, { color: colors.secondaryText }]}>Refreshing bookings...</Text>
+      ) : null}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  screen: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
-    padding: 20,
+    backgroundColor: '#0f1117',
   },
-  darkContainer: {
-    flex: 1,
-    backgroundColor: '#1a1a1a',
-    padding: 20,
+  headerSection: {
+    paddingHorizontal: 24,
+    paddingTop: 32,
+    paddingBottom: 8,
   },
   title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    textAlign: 'center',
-    marginBottom: 20,
-    color: '#333',
+    fontSize: 32,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  subtitle: {
+    fontSize: 16,
+  },
+  tabsContainer: {
+    flex: 1,
+    backgroundColor: '#0f1117',
+  },
+  requestCard: {
+    marginHorizontal: 24,
+    marginTop: 8,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 14,
+    gap: 8,
+  },
+  requestTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  requestSkill: {
+    fontSize: 13,
+    marginBottom: 4,
+  },
+  requestInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+  },
+  requestButton: {
+    marginTop: 4,
+    minHeight: 42,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  requestButtonDisabled: {
+    opacity: 0.65,
+  },
+  requestButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  container: {
+    flex: 1,
+    paddingHorizontal: 24,
+    paddingBottom: 20,
   },
   bookingList: {
     flex: 1,
   },
-  darkBookingList: {
-    flex: 1,
-    backgroundColor: '#1a1a1a',
+  bookingListContent: {
+    paddingBottom: 12,
   },
   bookingCard: {
-    backgroundColor: '#fff',
-    padding: 15,
-    marginBottom: 15,
-    borderRadius: 8,
+    padding: 16,
+    marginBottom: 12,
+    borderRadius: 12,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  darkBookingCard: {
-    backgroundColor: '#2a2a2a',
-    padding: 15,
-    marginBottom: 15,
-    borderRadius: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowRadius: 2,
+    elevation: 2,
   },
   bookingHeader: {
     flexDirection: 'row',
@@ -243,64 +483,79 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   skillName: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  darkSkillName: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#e0e0e0',
+    fontSize: 17,
+    fontWeight: '600',
   },
   status: {
     fontSize: 12,
-    fontWeight: 'bold',
+    fontWeight: '700',
   },
   mentorName: {
-    fontSize: 16,
-    color: '#666',
-    marginBottom: 10,
-  },
-  darkMentorName: {
-    fontSize: 16,
-    color: '#b0b0b0',
+    fontSize: 15,
     marginBottom: 10,
   },
   bookingDetails: {
     marginBottom: 10,
   },
+  pendingActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 2,
+  },
+  acceptButton: {
+    flex: 1,
+    minHeight: 38,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rejectButton: {
+    flex: 1,
+    minHeight: 38,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionButtonText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  pendingLabel: {
+    fontSize: 12,
+    marginTop: 4,
+    fontStyle: 'italic',
+  },
   detailText: {
     fontSize: 14,
-    color: '#666',
-    marginBottom: 3,
-  },
-  darkDetailText: {
-    fontSize: 14,
-    color: '#b0b0b0',
     marginBottom: 3,
   },
   reviewButton: {
-    backgroundColor: '#007AFF',
     padding: 10,
-    borderRadius: 6,
+    borderRadius: 8,
     alignItems: 'center',
   },
   reviewButtonText: {
     color: '#fff',
-    fontWeight: 'bold',
+    fontWeight: '700',
   },
   emptyState: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingBottom: 24,
   },
   emptyText: {
-    fontSize: 18,
-    color: '#999',
+    fontSize: 17,
     marginBottom: 5,
   },
   emptySubtext: {
     fontSize: 14,
-    color: '#ccc',
+    textAlign: 'center',
+  },
+  loadingText: {
+    textAlign: 'center',
+    fontSize: 12,
+    paddingBottom: 8,
   },
 });

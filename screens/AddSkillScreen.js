@@ -1,25 +1,41 @@
 import React, { useState } from "react";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView } from "react-native";
-import { useDispatch } from 'react-redux';
+import { View, Text, TextInput, StyleSheet, ScrollView } from "react-native";
+import { useDispatch, useSelector } from 'react-redux';
 import { useTheme } from '../contexts/ThemeContext';
 import { addSkillAndPersist } from '../store/userSlice';
 import Motion from '../components/motion';
+import { showError, showSuccess } from '../utils/notify';
 
 export default function AddSkillScreen({ navigation }) {
   const [skillType, setSkillType] = useState('offer');
   const [skillName, setSkillName] = useState('');
   const { colors } = useTheme();
   const dispatch = useDispatch();
+  const skills = useSelector((state) => state.user.skills || []);
 
   const handleAddSkill = async () => {
     const trimmed = skillName.trim();
     if (!trimmed) {
+      showError('Skill name required', 'Please enter a skill name before submitting.');
       return;
     }
 
-    await dispatch(addSkillAndPersist({ title: trimmed, type: skillType }));
-    setSkillName('');
-    navigation.navigate('Profile');
+    const duplicateSkill = skills.some(
+      (skill) => skill.type === skillType && skill.title.trim().toLowerCase() === trimmed.toLowerCase()
+    );
+    if (duplicateSkill) {
+      showError('Duplicate skill', `You already added "${trimmed}" in this category.`);
+      return;
+    }
+
+    try {
+      await dispatch(addSkillAndPersist({ title: trimmed, type: skillType })).unwrap();
+      setSkillName('');
+      showSuccess('Skill added', `"${trimmed}" was added to your profile.`);
+      navigation.navigate('Profile');
+    } catch {
+      showError('Unable to add skill', 'Please try again.');
+    }
   };
 
   return (

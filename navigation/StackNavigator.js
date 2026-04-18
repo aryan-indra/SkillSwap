@@ -5,6 +5,7 @@ import { useSelector } from 'react-redux';
 import LoginScreen from "../screens/LoginScreen";
 import TabNavigator from "./TabNavigator";
 import ReviewScreen from "../screens/ReviewScreen";
+import ChatThreadScreen from "../screens/ChatThreadScreen";
 import { useTheme } from "../contexts/ThemeContext";
 
 const Stack = createNativeStackNavigator();
@@ -42,6 +43,11 @@ export default function StackNavigator() {
             name="Review"
             component={ReviewScreen}
             options={{ animation: "fade" }}
+          />
+          <Stack.Screen
+            name="ChatThread"
+            component={ChatThreadScreen}
+            options={{ animation: "slide_from_right" }}
           />
         </Stack.Group>
       ) : (

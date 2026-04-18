@@ -1,12 +1,23 @@
-import React from "react";
-import { View, Text, TouchableOpacity, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator } from "react-native";
+import React, { useEffect, useRef } from "react";
+import { View, Text, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator } from "react-native";
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../hooks/useAuth';
 import Motion from '../components/motion';
+import { showError } from '../utils/notify';
 
 export default function LoginScreen() {
   const { colors } = useTheme();
   const { signInWithGoogle, authLoading, authError, isRequestReady } = useAuth();
+  const lastAuthErrorRef = useRef(null);
+
+  useEffect(() => {
+    if (!authError || authError === lastAuthErrorRef.current) {
+      return;
+    }
+
+    lastAuthErrorRef.current = authError;
+    showError('Sign-in failed', authError);
+  }, [authError]);
 
   return (
     <KeyboardAvoidingView

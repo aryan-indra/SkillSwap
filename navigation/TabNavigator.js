@@ -4,6 +4,8 @@ import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import HomeScreen from "../screens/HomeScreen";
 import AddSkillScreen from "../screens/AddSkillScreen";
 import MatchScreen from "../screens/MatchScreen";
+import BookingScreen from "../screens/BookingScreen";
+import ChatScreen from "../screens/ChatScreen";
 import ProfileScreen from "../screens/ProfileScreen";
 
 const Tab = createBottomTabNavigator();
@@ -52,6 +54,22 @@ export default function TabNavigator() {
         options={{
           tabBarLabel: 'Matches',
           tabBarIcon: ({ color, focused }) => <Ionicons name={focused ? 'heart' : 'heart-outline'} size={22} color={color} />,
+        }}
+      />
+      <Tab.Screen
+        name="Bookings"
+        component={BookingScreen}
+        options={{
+          tabBarLabel: 'Bookings',
+          tabBarIcon: ({ color, focused }) => <Ionicons name={focused ? 'calendar' : 'calendar-outline'} size={22} color={color} />,
+        }}
+      />
+      <Tab.Screen
+        name="Chat"
+        component={ChatScreen}
+        options={{
+          tabBarLabel: 'Chat',
+          tabBarIcon: ({ color, focused }) => <Ionicons name={focused ? 'chatbubble' : 'chatbubble-outline'} size={22} color={color} />,
         }}
       />
       <Tab.Screen 

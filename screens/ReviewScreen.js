@@ -1,32 +1,48 @@
 import React, { useState } from "react";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from "react-native";
+import { View, Text, TextInput, StyleSheet } from "react-native";
+import { useSelector } from 'react-redux';
 import { useTheme } from '../contexts/ThemeContext';
 import Motion from '../components/motion';
+import { createReview } from '../services/firestoreService';
+import { showError, showSuccess } from '../utils/notify';
 
 export default function ReviewScreen({ route, navigation }) {
   const mentor = route?.params?.mentor;
   const bookingId = route?.params?.bookingId;
   const [rating, setRating] = useState(0);
   const [reviewText, setReviewText] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const userId = useSelector((state) => state.user.user?.uid);
   const { theme, colors } = useTheme();
 
-  const handleSubmitReview = () => {
+  const handleSubmitReview = async () => {
     if (rating === 0) {
-      Alert.alert("Error", "Please select a rating");
+      showError("Rating required", "Please select a star rating before submitting.");
       return;
     }
 
-    // Here you would typically send the review to your backend
-    Alert.alert(
-      "Review Submitted",
-      `Thank you for reviewing ${mentor}!`,
-      [
-        {
-          text: "OK",
-          onPress: () => navigation.goBack()
-        }
-      ]
-    );
+    if (!mentor) {
+      showError("Missing mentor", "Unable to submit review because mentor details are missing.");
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+      const trimmedText = reviewText.trim();
+      await createReview({
+        bookingId: bookingId || null,
+        mentor,
+        rating,
+        reviewText: trimmedText,
+        reviewerUid: userId,
+      });
+      showSuccess("Review submitted", `Thanks for reviewing ${mentor}.`);
+      navigation.goBack();
+    } catch {
+      showError("Unable to save review", "Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const renderStars = () => {
@@ -92,14 +108,14 @@ export default function ReviewScreen({ route, navigation }) {
 
       <Motion
         as="touchable"
-        style={[styles.submitButton, rating === 0 && styles.submitButtonDisabled]}
+        style={[styles.submitButton, (rating === 0 || isSubmitting) && styles.submitButtonDisabled]}
         onPress={handleSubmitReview}
-        disabled={rating === 0}
+        disabled={rating === 0 || isSubmitting}
         variant="scale"
         delay={260}
         activeOpacity={0.85}
       >
-        <Text style={styles.submitButtonText}>Submit Review</Text>
+        <Text style={styles.submitButtonText}>{isSubmitting ? 'Submitting...' : 'Submit Review'}</Text>
       </Motion>
     </View>
   );

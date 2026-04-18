@@ -17,6 +17,7 @@ import {
   resetSkillsToDefault,
 } from './store/userSlice';
 import { clearAuthUser as clearStoredAuthUser, loadAuthUser, saveAuthUser } from './storage/authStorage';
+import { upsertUserProfile } from './services/firestoreService';
 
 function AppBootstrapper() {
   const dispatch = useDispatch();
@@ -37,6 +38,7 @@ function AppBootstrapper() {
 
         if (isActive && storedUser) {
           dispatch(setAuthUser(storedUser));
+          await upsertUserProfile(storedUser);
           await dispatch(initializeSkillsData(storedUser.uid));
         }
       } catch {
@@ -59,6 +61,7 @@ function AppBootstrapper() {
           };
 
           dispatch(setAuthUser(profile));
+          await upsertUserProfile(profile);
           await dispatch(initializeSkillsData(profile.uid));
           await saveAuthUser(profile);
         } else {
