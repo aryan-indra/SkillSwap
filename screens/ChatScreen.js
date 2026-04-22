@@ -20,8 +20,8 @@ export default function ChatScreen({ navigation, route }) {
     try {
       const rows = await fetchUserChatThreads(user.uid);
       setChats(rows);
-    } catch {
-      showError('Unable to load chats', 'Please try again.');
+    } catch (error) {
+      showError('Unable to load chats', error?.message || 'Please try again.');
     }
   }, [user?.uid]);
 
@@ -51,8 +51,8 @@ export default function ChatScreen({ navigation, route }) {
           peerUid,
         });
         navigation.setParams({ peerUid: undefined, peerName: undefined });
-      } catch {
-        showError('Unable to open chat', 'Please try again.');
+      } catch (error) {
+        showError('Unable to open chat', error?.message || 'Please try again.');
       }
     };
 

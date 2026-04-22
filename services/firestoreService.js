@@ -12,7 +12,23 @@ import {
   updateDoc,
   where,
 } from 'firebase/firestore';
-import { db } from '../firebaseconfig';
+import { auth, db } from '../firebaseconfig';
+
+const getAuthUidOrThrow = () => {
+  const authUid = auth.currentUser?.uid;
+  if (!authUid) {
+    throw new Error('Your session expired. Please sign in again.');
+  }
+  return authUid;
+};
+
+const resolveAuthUid = (expectedUid) => {
+  const authUid = getAuthUidOrThrow();
+  if (expectedUid && expectedUid !== authUid) {
+    throw new Error('Your account session changed. Please reopen chat.');
+  }
+  return authUid;
+};
 
 const normalizeSkill = (docSnap) => {
   const data = docSnap.data();
@@ -57,6 +73,11 @@ const normalizeBooking = (docSnap) => {
 
 export const upsertUserProfile = async (profile) => {
   if (!profile?.uid) {
+    return;
+  }
+
+  // Avoid permission failures during app boot before Firebase auth restores.
+  if (auth.currentUser?.uid !== profile.uid) {
     return;
   }
 
@@ -250,12 +271,24 @@ const normalizeMessage = (docSnap) => {
 };
 
 export const getOrCreateChatThread = async ({ currentUser, peerUid, peerName }) => {
-  if (!currentUser?.uid || !peerUid) {
+  const currentUid = resolveAuthUid(currentUser?.uid);
+
+  if (!peerUid) {
     throw new Error('Missing participant details');
   }
 
-  const pairKey = buildPairKey(currentUser.uid, peerUid);
-  const existingChatSnap = await getDocs(query(collection(db, 'chats'), where('pairKey', '==', pairKey)));
+  if (peerUid === currentUid) {
+    throw new Error('You cannot start a chat with yourself.');
+  }
+
+  const pairKey = buildPairKey(currentUid, peerUid);
+  const existingChatSnap = await getDocs(
+    query(
+      collection(db, 'chats'),
+      where('participants', 'array-contains', currentUid),
+      where('pairKey', '==', pairKey)
+    )
+  );
   if (!existingChatSnap.empty) {
     const existing = existingChatSnap.docs[0];
     return { id: existing.id };
@@ -263,9 +296,9 @@ export const getOrCreateChatThread = async ({ currentUser, peerUid, peerName }) 
 
   const newChatRef = await addDoc(collection(db, 'chats'), {
     pairKey,
-    participants: [currentUser.uid, peerUid],
+    participants: [currentUid, peerUid],
     participantNames: {
-      [currentUser.uid]: currentUser.name || currentUser.email || 'You',
+      [currentUid]: currentUser.name || currentUser.email || 'You',
       [peerUid]: peerName || 'Community member',
     },
     lastMessage: '',
@@ -277,13 +310,11 @@ export const getOrCreateChatThread = async ({ currentUser, peerUid, peerName }) 
 };
 
 export const fetchUserChatThreads = async (uid) => {
-  if (!uid) {
-    return [];
-  }
+  const currentUid = resolveAuthUid(uid);
 
-  const snapshot = await getDocs(query(collection(db, 'chats'), where('participants', 'array-contains', uid)));
+  const snapshot = await getDocs(query(collection(db, 'chats'), where('participants', 'array-contains', currentUid)));
   return snapshot.docs
-    .map((item) => normalizeChat(item, uid))
+    .map((item) => normalizeChat(item, currentUid))
     .sort((a, b) => {
       if (!a.lastMessageAt) {
         return 1;
@@ -295,9 +326,22 @@ export const fetchUserChatThreads = async (uid) => {
     });
 };
 
-export const fetchChatMessages = async (chatId) => {
+export const fetchChatMessages = async (chatId, uid) => {
+  const currentUid = resolveAuthUid(uid);
+
   if (!chatId) {
+    throw new Error('Missing chat thread id.');
+  }
+
+  const chatRef = doc(db, 'chats', chatId);
+  const chatSnap = await getDoc(chatRef);
+  if (!chatSnap.exists()) {
     return [];
+  }
+
+  const participants = Array.isArray(chatSnap.data()?.participants) ? chatSnap.data().participants : [];
+  if (!participants.includes(currentUid)) {
+    throw new Error('You do not have access to this conversation.');
   }
 
   const snapshot = await getDocs(query(collection(db, 'chats', chatId, 'messages'), orderBy('createdAt', 'asc')));
@@ -305,19 +349,32 @@ export const fetchChatMessages = async (chatId) => {
 };
 
 export const sendChatMessage = async ({ chatId, senderUid, senderName, text }) => {
-  if (!chatId || !senderUid || !text?.trim()) {
+  const currentUid = resolveAuthUid(senderUid);
+
+  if (!chatId || !text?.trim()) {
     throw new Error('Missing message payload');
   }
 
   const trimmed = text.trim();
+  const chatRef = doc(db, 'chats', chatId);
+  const chatSnap = await getDoc(chatRef);
+  if (!chatSnap.exists()) {
+    throw new Error('This chat no longer exists.');
+  }
+
+  const participants = Array.isArray(chatSnap.data()?.participants) ? chatSnap.data().participants : [];
+  if (!participants.includes(currentUid)) {
+    throw new Error('You are not a participant in this chat.');
+  }
+
   await addDoc(collection(db, 'chats', chatId, 'messages'), {
-    senderUid,
+    senderUid: currentUid,
     senderName: senderName || 'Unknown user',
     text: trimmed,
     createdAt: serverTimestamp(),
   });
 
-  await updateDoc(doc(db, 'chats', chatId), {
+  await updateDoc(chatRef, {
     lastMessage: trimmed,
     lastMessageAt: serverTimestamp(),
   });

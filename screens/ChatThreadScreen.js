@@ -7,7 +7,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { fetchChatMessages, sendChatMessage } from '../services/firestoreService';
 import { showError } from '../utils/notify';
 
-export default function ChatThreadScreen({ route }) {
+export default function ChatThreadScreen({ route, navigation }) {
   const { colors } = useTheme();
   const currentUser = useSelector((state) => state.user.user);
   const chatId = route?.params?.chatId;
@@ -16,17 +16,25 @@ export default function ChatThreadScreen({ route }) {
   const [messageText, setMessageText] = React.useState('');
   const [sending, setSending] = React.useState(false);
 
+  const handleBack = React.useCallback(() => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    navigation.navigate('Main');
+  }, [navigation]);
+
   const loadMessages = React.useCallback(async () => {
-    if (!chatId) {
+    if (!chatId || !currentUser?.uid) {
       return;
     }
     try {
-      const rows = await fetchChatMessages(chatId);
+      const rows = await fetchChatMessages(chatId, currentUser.uid);
       setMessages(rows);
-    } catch {
-      showError('Unable to load messages', 'Please try again.');
+    } catch (error) {
+      showError('Unable to load messages', error?.message || 'Please try again.');
     }
-  }, [chatId]);
+  }, [chatId, currentUser?.uid]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -54,8 +62,8 @@ export default function ChatThreadScreen({ route }) {
       });
       setMessageText('');
       await loadMessages();
-    } catch {
-      showError('Unable to send message', 'Please try again.');
+    } catch (error) {
+      showError('Unable to send message', error?.message || 'Please try again.');
     } finally {
       setSending(false);
     }
@@ -86,6 +94,15 @@ export default function ChatThreadScreen({ route }) {
   return (
     <View style={[styles.screen, { backgroundColor: colors.background }]}>
       <View style={styles.headerSection}>
+        <Motion
+          as="touchable"
+          onPress={handleBack}
+          style={[styles.backButton, { borderColor: colors.muted, backgroundColor: colors.card }]}
+          variant="scale"
+          activeOpacity={0.85}
+        >
+          <Text style={[styles.backButtonText, { color: colors.primaryText }]}>Back</Text>
+        </Motion>
         <Text style={[styles.title, { color: colors.primaryText }]}>{peerName}</Text>
         <Text style={[styles.subtitle, { color: colors.secondaryText }]}>Chat before confirming a session</Text>
       </View>
@@ -130,6 +147,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 32,
     paddingBottom: 8,
+  },
+  backButton: {
+    alignSelf: 'flex-start',
+    minHeight: 34,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  backButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
   },
   title: {
     fontSize: 26,
