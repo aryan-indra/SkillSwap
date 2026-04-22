@@ -66,9 +66,71 @@ const normalizeBooking = (docSnap) => {
     date: data?.date || '',
     time: data?.time || '',
     duration: data?.duration || '',
+    startAtIso: data?.startAtIso || null,
+    endAtIso: data?.endAtIso || null,
+    timezone: data?.timezone || null,
+    timezoneOffsetMinutes: Number.isFinite(data?.timezoneOffsetMinutes) ? data.timezoneOffsetMinutes : null,
     status: data?.status || 'pending',
     createdAt: data?.createdAt?.toDate?.()?.toISOString?.() || null,
   };
+};
+
+const isActiveBookingStatus = (status) => status === 'pending' || status === 'confirmed';
+
+const intervalsOverlap = (startA, endA, startB, endB) => startA < endB && endA > startB;
+
+const collectUniqueDocs = (snapshots) => {
+  const merged = snapshots.flatMap((snapshot) => snapshot.docs);
+  const seen = new Set();
+  const unique = [];
+  merged.forEach((entry) => {
+    if (!seen.has(entry.id)) {
+      seen.add(entry.id);
+      unique.push(entry);
+    }
+  });
+  return unique;
+};
+
+const assertNoBookingConflict = async ({ requesterUid, startAtIso, endAtIso, excludeBookingId }) => {
+  if (!requesterUid || !startAtIso || !endAtIso) {
+    throw new Error('Missing schedule window for booking request.');
+  }
+
+  const startTime = new Date(startAtIso).getTime();
+  const endTime = new Date(endAtIso).getTime();
+  if (Number.isNaN(startTime) || Number.isNaN(endTime) || endTime <= startTime) {
+    throw new Error('Invalid schedule time range.');
+  }
+
+  const [requesterAsRequester, requesterAsReceiver] = await Promise.all([
+    getDocs(query(collection(db, 'bookings'), where('requesterUid', '==', requesterUid))),
+    getDocs(query(collection(db, 'bookings'), where('receiverUid', '==', requesterUid))),
+  ]);
+
+  const userBookings = collectUniqueDocs([
+    requesterAsRequester,
+    requesterAsReceiver,
+  ]).map(normalizeBooking);
+
+  const conflict = userBookings.some((booking) => {
+    if (excludeBookingId && booking.id === excludeBookingId) {
+      return false;
+    }
+    if (!isActiveBookingStatus(booking.status) || !booking.startAtIso || !booking.endAtIso) {
+      return false;
+    }
+    const existingStart = new Date(booking.startAtIso).getTime();
+    const existingEnd = new Date(booking.endAtIso).getTime();
+    if (Number.isNaN(existingStart) || Number.isNaN(existingEnd)) {
+      return false;
+    }
+    return intervalsOverlap(startTime, endTime, existingStart, existingEnd);
+  });
+
+  if (conflict) {
+    throw new Error('Selected slot conflicts with one of your existing pending/confirmed bookings.');
+  }
 };
 
 export const upsertUserProfile = async (profile) => {
@@ -181,9 +243,24 @@ export const createBookingRequest = async ({
   date,
   time,
   duration,
+  startAtIso,
+  endAtIso,
+  timezone,
+  timezoneOffsetMinutes,
 }) => {
+  const authUid = resolveAuthUid(requesterUid);
+  if (!receiverUid || receiverUid === authUid) {
+    throw new Error('Invalid booking receiver.');
+  }
+
+  await assertNoBookingConflict({
+    requesterUid: authUid,
+    startAtIso,
+    endAtIso,
+  });
+
   const bookingRef = await addDoc(collection(db, 'bookings'), {
-    requesterUid,
+    requesterUid: authUid,
     requesterName: requesterName || 'Unknown user',
     receiverUid,
     receiverName: receiverName || 'Unknown user',
@@ -191,6 +268,10 @@ export const createBookingRequest = async ({
     date,
     time,
     duration,
+    startAtIso: startAtIso || null,
+    endAtIso: endAtIso || null,
+    timezone: timezone || null,
+    timezoneOffsetMinutes: Number.isFinite(timezoneOffsetMinutes) ? timezoneOffsetMinutes : null,
     status: 'pending',
     createdAt: serverTimestamp(),
   });
@@ -232,6 +313,24 @@ export const fetchBookingsForUser = async (uid) => {
 export const updateBookingRequestStatus = async ({ bookingId, status }) => {
   if (!bookingId) {
     throw new Error('Missing booking id');
+  }
+
+  if (status === 'confirmed') {
+    const bookingRef = doc(db, 'bookings', bookingId);
+    const bookingSnap = await getDoc(bookingRef);
+    if (!bookingSnap.exists()) {
+      throw new Error('Booking request no longer exists.');
+    }
+
+    const booking = normalizeBooking(bookingSnap);
+    if (booking.startAtIso && booking.endAtIso) {
+      await assertNoBookingConflict({
+        requesterUid: booking.requesterUid,
+        startAtIso: booking.startAtIso,
+        endAtIso: booking.endAtIso,
+        excludeBookingId: booking.id,
+      });
+    }
   }
 
   await setDoc(

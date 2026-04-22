@@ -1,5 +1,5 @@
 import React from "react";
-import { View, Text, FlatList, StyleSheet, TextInput } from "react-native";
+import { View, Text, FlatList, StyleSheet } from "react-native";
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
 import { useTheme } from '../contexts/ThemeContext';
 import { useFocusEffect } from '@react-navigation/native';
@@ -9,6 +9,97 @@ import { createBookingRequest, fetchBookingsForUser, updateBookingRequestStatus 
 import { showError, showSuccess } from '../utils/notify';
 
 const Tab = createMaterialTopTabNavigator();
+const DURATION_OPTIONS = [30, 60, 90];
+const SLOT_WINDOW_DAYS = 7;
+
+const toLocalIso = (date) => {
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+};
+
+const formatSlotDate = (date, timezone) =>
+  new Intl.DateTimeFormat(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    timeZone: timezone,
+  }).format(date);
+
+const formatSlotTime = (date, timezone) =>
+  new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: timezone,
+  }).format(date);
+
+const formatSlotRange = (startDate, endDate, timezone) =>
+  `${formatSlotDate(startDate, timezone)} • ${formatSlotTime(startDate, timezone)} - ${formatSlotTime(endDate, timezone)}`;
+
+const hasSlotConflict = (bookings, slotStartIso, slotEndIso) => {
+  const start = new Date(slotStartIso).getTime();
+  const end = new Date(slotEndIso).getTime();
+  if (Number.isNaN(start) || Number.isNaN(end)) {
+    return true;
+  }
+
+  return bookings.some((booking) => {
+    if (!['pending', 'confirmed'].includes(booking.status) || !booking.startAtIso || !booking.endAtIso) {
+      return false;
+    }
+    const existingStart = new Date(booking.startAtIso).getTime();
+    const existingEnd = new Date(booking.endAtIso).getTime();
+    if (Number.isNaN(existingStart) || Number.isNaN(existingEnd)) {
+      return false;
+    }
+    return start < existingEnd && end > existingStart;
+  });
+};
+
+const buildAvailabilitySlots = ({ userBookings, mentorBookings, selectedDurationMinutes, timezone }) => {
+  const now = new Date();
+  const slotsByDay = [];
+
+  for (let dayOffset = 0; dayOffset < SLOT_WINDOW_DAYS; dayOffset += 1) {
+    const dayStart = new Date(now);
+    dayStart.setHours(0, 0, 0, 0);
+    dayStart.setDate(dayStart.getDate() + dayOffset);
+
+    const daySlots = [];
+    for (let hour = 9; hour <= 20; hour += 1) {
+      for (const minute of [0, 30]) {
+        const start = new Date(dayStart);
+        start.setHours(hour, minute, 0, 0);
+        const end = new Date(start.getTime() + selectedDurationMinutes * 60 * 1000);
+
+        if (start.getTime() <= now.getTime()) {
+          continue;
+        }
+
+        const slotStartIso = start.toISOString();
+        const slotEndIso = end.toISOString();
+        const busy = hasSlotConflict(userBookings, slotStartIso, slotEndIso) || hasSlotConflict(mentorBookings, slotStartIso, slotEndIso);
+
+        daySlots.push({
+          id: `${slotStartIso}:${selectedDurationMinutes}`,
+          startAtIso: slotStartIso,
+          endAtIso: slotEndIso,
+          label: formatSlotRange(start, end, timezone),
+          isAvailable: !busy,
+        });
+      }
+    }
+
+    if (daySlots.length) {
+      slotsByDay.push({
+        id: toLocalIso(dayStart),
+        label: formatSlotDate(dayStart, timezone),
+        slots: daySlots,
+      });
+    }
+  }
+
+  return slotsByDay;
+};
 
 function BookingList({ bookings, navigation, currentUserId, onAccept, onReject }) {
   const { colors } = useTheme();
@@ -197,10 +288,11 @@ export default function BookingScreen({ route, navigation }) {
   const user = useSelector((state) => state.user.user);
   const [bookings, setBookings] = React.useState([]);
   const [loading, setLoading] = React.useState(false);
-  const [date, setDate] = React.useState('');
-  const [time, setTime] = React.useState('');
-  const [duration, setDuration] = React.useState('');
+  const [selectedDurationMinutes, setSelectedDurationMinutes] = React.useState(60);
+  const [selectedSlot, setSelectedSlot] = React.useState(null);
   const [isSubmittingRequest, setIsSubmittingRequest] = React.useState(false);
+  const userTimezone = React.useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', []);
+  const timezoneOffsetMinutes = new Date().getTimezoneOffset();
 
   const loadBookings = React.useCallback(async () => {
     if (!user?.uid) {
@@ -223,40 +315,62 @@ export default function BookingScreen({ route, navigation }) {
     }, [loadBookings])
   );
 
-  const handleCreateRequest = async () => {
-    const trimmedDate = date.trim();
-    const trimmedTime = time.trim();
-    const trimmedDuration = duration.trim();
+  React.useEffect(() => {
+    setSelectedSlot(null);
+  }, [selectedDurationMinutes, mentorUid, skill]);
 
+  const availabilityDays = React.useMemo(
+    () =>
+      buildAvailabilitySlots({
+        userBookings: bookings,
+        mentorBookings: [],
+        selectedDurationMinutes,
+        timezone: userTimezone,
+      }),
+    [bookings, selectedDurationMinutes, userTimezone]
+  );
+
+  const slotSummary = selectedSlot
+    ? formatSlotRange(new Date(selectedSlot.startAtIso), new Date(selectedSlot.endAtIso), userTimezone)
+    : '';
+
+  const handleCreateRequest = async () => {
     if (!mentorUid || !skill || !mentor) {
       showError('Missing match details', 'Please schedule from a match card.');
       return;
     }
-    if (!trimmedDate || !trimmedTime || !trimmedDuration) {
-      showError('Missing schedule details', 'Please provide day, time, and duration.');
+    if (!selectedSlot) {
+      showError('Missing schedule details', 'Please select an available time slot.');
       return;
     }
 
     try {
       setIsSubmittingRequest(true);
+      if (hasSlotConflict(bookings, selectedSlot.startAtIso, selectedSlot.endAtIso)) {
+        throw new Error('This slot conflicts with one of your existing sessions.');
+      }
+      const slotStart = new Date(selectedSlot.startAtIso);
+      const slotEnd = new Date(selectedSlot.endAtIso);
       await createBookingRequest({
         requesterUid: user.uid,
         requesterName: user.name || user.email || 'Unknown user',
         receiverUid: mentorUid,
         receiverName: mentor,
         skill,
-        date: trimmedDate,
-        time: trimmedTime,
-        duration: trimmedDuration,
+        date: formatSlotDate(slotStart, userTimezone),
+        time: `${formatSlotTime(slotStart, userTimezone)} - ${formatSlotTime(slotEnd, userTimezone)}`,
+        duration: `${selectedDurationMinutes} mins`,
+        startAtIso: selectedSlot.startAtIso,
+        endAtIso: selectedSlot.endAtIso,
+        timezone: userTimezone,
+        timezoneOffsetMinutes,
       });
-      setDate('');
-      setTime('');
-      setDuration('');
+      setSelectedSlot(null);
       showSuccess('Request sent', `Session request sent to ${mentor}.`);
       await loadBookings();
       navigation.setParams({ mentor: undefined, mentorUid: undefined, skill: undefined });
-    } catch {
-      showError('Unable to schedule', 'Please try again.');
+    } catch (error) {
+      showError('Unable to schedule', error?.message || 'Please try again.');
     } finally {
       setIsSubmittingRequest(false);
     }
@@ -293,27 +407,78 @@ export default function BookingScreen({ route, navigation }) {
         <View style={[styles.requestCard, { backgroundColor: colors.card, borderColor: colors.muted }]}>
           <Text style={[styles.requestTitle, { color: colors.primaryText }]}>Schedule with {mentor}</Text>
           <Text style={[styles.requestSkill, { color: colors.secondaryText }]}>Skill: {skill}</Text>
-          <TextInput
-            style={[styles.requestInput, { color: colors.primaryText, borderColor: colors.muted }]}
-            placeholder="Day (e.g., Monday, 20 May)"
-            placeholderTextColor={colors.placeholder}
-            value={date}
-            onChangeText={setDate}
-          />
-          <TextInput
-            style={[styles.requestInput, { color: colors.primaryText, borderColor: colors.muted }]}
-            placeholder="Time (e.g., 7:00 PM)"
-            placeholderTextColor={colors.placeholder}
-            value={time}
-            onChangeText={setTime}
-          />
-          <TextInput
-            style={[styles.requestInput, { color: colors.primaryText, borderColor: colors.muted }]}
-            placeholder="Duration (e.g., 60 mins)"
-            placeholderTextColor={colors.placeholder}
-            value={duration}
-            onChangeText={setDuration}
-          />
+          <Text style={[styles.timezoneText, { color: colors.secondaryText }]}>Timezone: {userTimezone}</Text>
+          <View style={styles.durationRow}>
+            {DURATION_OPTIONS.map((durationValue) => {
+              const isActive = durationValue === selectedDurationMinutes;
+              return (
+                <Motion
+                  key={durationValue}
+                  as="touchable"
+                  style={[
+                    styles.durationChip,
+                    {
+                      borderColor: isActive ? colors.accent : colors.muted,
+                      backgroundColor: isActive ? colors.accent : colors.card,
+                    },
+                  ]}
+                  onPress={() => setSelectedDurationMinutes(durationValue)}
+                  activeOpacity={0.85}
+                  variant="scale"
+                >
+                  <Text style={[styles.durationChipText, { color: isActive ? '#fff' : colors.primaryText }]}>
+                    {durationValue} mins
+                  </Text>
+                </Motion>
+              );
+            })}
+          </View>
+          <View style={styles.slotGroup}>
+            {availabilityDays.length ? (
+              availabilityDays.map((day) => (
+                <View key={day.id} style={styles.slotDaySection}>
+                  <Text style={[styles.slotDayLabel, { color: colors.primaryText }]}>{day.label}</Text>
+                  <View style={styles.slotsWrap}>
+                    {day.slots.map((slot) => {
+                      const isSelected = selectedSlot?.id === slot.id;
+                      return (
+                        <Motion
+                          key={slot.id}
+                          as="touchable"
+                          style={[
+                            styles.slotChip,
+                            {
+                              borderColor: isSelected ? colors.accent : colors.muted,
+                              backgroundColor: isSelected ? colors.accent : colors.card,
+                              opacity: slot.isAvailable ? 1 : 0.5,
+                            },
+                          ]}
+                          onPress={() => {
+                            if (!slot.isAvailable) {
+                              return;
+                            }
+                            setSelectedSlot(slot);
+                          }}
+                          activeOpacity={slot.isAvailable ? 0.85 : 1}
+                          disabled={!slot.isAvailable}
+                          variant="scale"
+                        >
+                          <Text style={[styles.slotChipText, { color: isSelected ? '#fff' : colors.primaryText }]}>
+                            {slot.label}
+                          </Text>
+                        </Motion>
+                      );
+                    })}
+                  </View>
+                </View>
+              ))
+            ) : (
+              <Text style={[styles.noSlotsText, { color: colors.secondaryText }]}>No upcoming slots available.</Text>
+            )}
+          </View>
+          <Text style={[styles.selectedSlotText, { color: colors.secondaryText }]}>
+            {slotSummary ? `Selected: ${slotSummary}` : 'Select a slot to continue'}
+          </Text>
           <Motion
             as="touchable"
             style={[styles.requestButton, { backgroundColor: colors.accent }, isSubmittingRequest && styles.requestButtonDisabled]}
@@ -322,7 +487,7 @@ export default function BookingScreen({ route, navigation }) {
             variant="scale"
             activeOpacity={0.85}
           >
-            <Text style={styles.requestButtonText}>{isSubmittingRequest ? 'Sending...' : 'Send Request'}</Text>
+            <Text style={styles.requestButtonText}>{isSubmittingRequest ? 'Sending...' : 'Request Selected Slot'}</Text>
           </Motion>
         </View>
       ) : null}
@@ -433,12 +598,60 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginBottom: 4,
   },
-  requestInput: {
+  timezoneText: {
+    fontSize: 12,
+  },
+  durationRow: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  durationChip: {
     borderWidth: 1,
-    borderRadius: 8,
+    borderRadius: 999,
     paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
+    minHeight: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  durationChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  slotGroup: {
+    maxHeight: 260,
+    gap: 10,
+  },
+  slotDaySection: {
+    gap: 6,
+  },
+  slotDayLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  slotsWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  slotChip: {
+    borderWidth: 1,
+    borderRadius: 999,
+    minHeight: 30,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  slotChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  noSlotsText: {
+    fontSize: 13,
+    fontStyle: 'italic',
+  },
+  selectedSlotText: {
+    fontSize: 12,
   },
   requestButton: {
     marginTop: 4,
